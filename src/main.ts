@@ -5,6 +5,9 @@
  * (Hand tracking, fruit, and slicing arrive in M1–M3, wired into the same loop.)
  */
 import { startWebcam } from "./webcam.ts";
+import { HandTracker, FINGERTIPS, type Hand } from "./hands.ts";
+
+const tracker = new HandTracker();
 
 const video = document.getElementById("cam") as HTMLVideoElement;
 const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -31,6 +34,42 @@ let running = false;
 let lastTime = performance.now();
 let fps = 0;
 
+/** Map a normalized landmark (raw video space) to mirrored canvas pixels. */
+function toCanvas(nx: number, ny: number, w: number, h: number): [number, number] {
+  return [(1 - nx) * w, ny * h]; // mirror X to match the mirrored video
+}
+
+/** Draw fingertip dots + a light palm skeleton for each detected hand. */
+function drawHands(hands: Hand[], w: number, h: number): void {
+  for (const hand of hands) {
+    if (hand.length < 21) continue;
+
+    // Palm skeleton: wrist (0) out to each fingertip, subtle.
+    ctx.strokeStyle = "rgba(142, 230, 200, 0.35)";
+    ctx.lineWidth = 2;
+    const [wx, wy] = toCanvas(hand[0].x, hand[0].y, w, h);
+    for (const tip of FINGERTIPS) {
+      const [tx, ty] = toCanvas(hand[tip].x, hand[tip].y, w, h);
+      ctx.beginPath();
+      ctx.moveTo(wx, wy);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+    }
+
+    // Fingertip dots — bright, so tracking is obvious.
+    for (const tip of FINGERTIPS) {
+      const [tx, ty] = toCanvas(hand[tip].x, hand[tip].y, w, h);
+      ctx.beginPath();
+      ctx.arc(tx, ty, 10, 0, Math.PI * 2);
+      ctx.fillStyle = "#8ee6c8";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(5,7,13,0.8)";
+      ctx.stroke();
+    }
+  }
+}
+
 /** The single render/update loop. Everything game-side hangs off this. */
 function loop(now: number): void {
   if (!running) return;
@@ -45,23 +84,15 @@ function loop(now: number): void {
   // Clear — the mirrored <video> shows through underneath.
   ctx.clearRect(0, 0, w, h);
 
-  // M0 sanity marker: a mirrored crosshair so we can confirm the canvas
-  // is aligned with the video and the loop is alive. Removed once hands render.
-  ctx.save();
-  ctx.translate(w, 0);
-  ctx.scale(-1, 1); // mirror the drawing to match the mirrored video
-  ctx.strokeStyle = "rgba(142, 230, 200, 0.5)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(w / 2, h / 2, 40, 0, Math.PI * 2);
-  ctx.moveTo(w / 2 - 60, h / 2);
-  ctx.lineTo(w / 2 + 60, h / 2);
-  ctx.moveTo(w / 2, h / 2 - 60);
-  ctx.lineTo(w / 2, h / 2 + 60);
-  ctx.stroke();
-  ctx.restore();
+  // Run hand detection against the live video frame.
+  tracker.detect(video, now);
 
-  setStatus(`running · ${fps.toFixed(0)} fps · ${w}×${h}`);
+  // Draw the tracked hands. MediaPipe returns coords in RAW (unmirrored) video
+  // space; the video is displayed mirrored, so we mirror X here (1 - x) to make
+  // the dots land on the user's actual fingers.
+  drawHands(tracker.hands, w, h);
+
+  setStatus(`running · ${fps.toFixed(0)} fps · hands:${tracker.hands.length}`);
 
   requestAnimationFrame(loop);
 }
@@ -73,6 +104,10 @@ async function start(): Promise<void> {
     startBtn.textContent = "Starting…";
 
     await startWebcam(video);
+
+    setStatus("loading hand model…");
+    startBtn.textContent = "Loading model…";
+    await tracker.init();
 
     resizeCanvas();
     overlay.classList.add("hidden");
