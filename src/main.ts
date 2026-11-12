@@ -8,7 +8,7 @@
  */
 import { startWebcam } from "./webcam.ts";
 import { HandTracker, INDEX_TIP, type Hand } from "./hands.ts";
-import { FruitManager, type Fruit } from "./fruit.ts";
+import { FruitManager, buildSprites, getSprite, type Fruit } from "./fruit.ts";
 import { Slicer } from "./slicer.ts";
 import { Effects } from "./effects.ts";
 import { Game } from "./game.ts";
@@ -38,6 +38,7 @@ function resizeCanvas(): void {
   canvas.width = Math.floor(canvas.clientWidth * dpr);
   canvas.height = Math.floor(canvas.clientHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildSprites(dpr); // (re)render crisp fruit sprites at this DPR
 }
 window.addEventListener("resize", resizeCanvas);
 
@@ -110,18 +111,17 @@ function drawFruit(f: Fruit): void {
     ctx.textBaseline = "middle";
     ctx.fillText("💣", 0, 2);
   } else {
-    ctx.beginPath();
-    ctx.arc(0, 0, f.type.radius, 0, Math.PI * 2);
-    ctx.fillStyle = f.type.color;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(0, 0, f.type.radius * 0.6, 0, Math.PI * 2);
-    ctx.fillStyle = f.type.inner;
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(-f.type.radius * 0.3, -f.type.radius * 0.3, f.type.radius * 0.15, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.5)";
-    ctx.fill();
+    const spr = getSprite(f.type.name);
+    const d = f.type.radius * 2;
+    if (spr) {
+      ctx.drawImage(spr, -f.type.radius, -f.type.radius, d, d);
+    } else {
+      // Fallback if a sprite is missing: simple two-tone disc.
+      ctx.beginPath();
+      ctx.arc(0, 0, f.type.radius, 0, Math.PI * 2);
+      ctx.fillStyle = f.type.color;
+      ctx.fill();
+    }
   }
   ctx.restore();
 }

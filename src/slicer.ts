@@ -37,12 +37,12 @@ function distToSegment(px: number, py: number, ax: number, ay: number, bx: numbe
 export class Slicer {
   // One trail per hand index; each trail is a short ring of recent points.
   private trails: Map<number, TrailPoint[]> = new Map();
-  private readonly maxTrail = 10;
+  private readonly maxTrail = 14;
   private readonly trailTtl = 180; // ms — points older than this are dropped
 
   // Tuning knobs (feel). SPEED is the key one.
-  private readonly minSpeed = 650; // px/s — below this a pass does NOT slice
-  private readonly hitPadding = 14; // px added to fruit radius for forgiveness
+  private readonly minSpeed = 520; // px/s — below this a pass does NOT slice (lowered for responsiveness)
+  private readonly hitPadding = 20; // px added to fruit radius for forgiveness
 
   /** Record a fingertip position for a hand this frame. */
   addPoint(handIndex: number, x: number, y: number, t: number): void {
