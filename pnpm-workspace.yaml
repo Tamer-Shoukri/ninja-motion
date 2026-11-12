@@ -1,2 +1,5 @@
+# Not a monorepo — empty packages list keeps pnpm happy on CI.
+packages: []
+# Allow esbuild's postinstall (needed by Vite) to run.
 allowBuilds:
   esbuild: true
