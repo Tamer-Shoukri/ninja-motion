@@ -40,6 +40,9 @@
       .btn.primary { background: #8ee6c8; color: #05070d; border-color: #8ee6c8; box-shadow: 0 0 28px rgba(142,230,200,0.35); }
       .btn.primary:hover { box-shadow: 0 0 40px rgba(142,230,200,0.55); }
       .btn:disabled { opacity: 0.6; cursor: progress; transform: none; }
+      .link { background: none; border: none; color: rgba(234,240,255,0.55); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 4px; }
+      .link:hover { color: #eaf0ff; }
+      .link:focus-visible { outline: 2px solid #8ee6c8; outline-offset: 3px; border-radius: 4px; }
       #note { font-size: 13px; color: rgba(234,240,255,0.5); }
       #error { font-size: 14px; color: #ff9aa8; min-height: 1.2em; }
       #status {
@@ -60,9 +63,9 @@
         <h1>NINJA <span>MOTION</span></h1>
         <p>Slice flying fruit by swinging your hands at the camera. Stand back so your hands are in frame — fast swipes cut, slow ones don't. Dodge the bombs.</p>
         <div class="buttons">
-          <button id="camBtn" class="btn primary">Play with camera</button>
-          <button id="mouseBtn" class="btn">No webcam? Play with mouse / touch</button>
+          <button id="camBtn" class="btn primary">Enable camera &amp; play</button>
         </div>
+        <button id="mouseBtn" class="link">No webcam? Try it with a mouse or touchscreen instead</button>
         <div id="error" role="alert"></div>
         <div id="note">Hand tracking runs entirely on your device — no video leaves your browser.</div>
       </div>

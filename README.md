@@ -1,6 +1,6 @@
 # 🥷 Ninja Motion
 
-**Fruit Ninja you play with your body.** Your webcam tracks your hands in real time and you slice flying fruit by swinging your actual arms through the air. No webcam? It plays with a mouse or touchscreen too.
+**Fruit Ninja you play with your body.** Your webcam tracks your fingers in real time and you slice flying fruit by swinging your hands through the air. (No webcam? A mouse/touch fallback lets anyone try it.)
 
 ![status](https://img.shields.io/badge/status-playable-brightgreen) ![tech](https://img.shields.io/badge/TypeScript-Vite-blue) ![cv](https://img.shields.io/badge/MediaPipe-HandLandmarker-orange) ![tests](https://img.shields.io/badge/tests-33%20passing-brightgreen)
 
