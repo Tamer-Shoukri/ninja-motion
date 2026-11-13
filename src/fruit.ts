@@ -1,198 +1,241 @@
 /**
- * Fruit physics + spawning + sprites.
+ * Fruit physics + wave spawning. Pure logic (no DOM) so it is unit-tested.
  *
- * Fruits launch from just below the bottom edge with an upward velocity and a
- * sideways drift, then arc under gravity. Everything is in CANVAS PIXEL space
- * so slice detection (also in canvas space) lines up.
- *
- * Sprites: each fruit is rendered once from a high-DPI emoji into an offscreen
- * canvas, then blitted each frame. Recognizable, consistent, zero network, zero
- * licensing risk. `color`/`inner` remain for the split-halves flesh effect.
+ * Fruit launch from below the bottom edge and arc under gravity. Spawning is
+ * wave-based: a wave is a small pattern (a scatter, a quick salvo from one
+ * side, a symmetric pair) rather than one fruit at a time, which is what makes
+ * Fruit Ninja feel like rhythm instead of whack-a-mole. Everything is in
+ * canvas pixels, scaled to the screen so phones and big monitors play the same.
  */
 
 export interface FruitType {
   name: string;
-  emoji: string;
-  color: string; // rind (for split halves)
-  inner: string; // flesh (for split halves + juice)
-  radius: number;
+  emoji: string; // "" = custom-drawn sprite
+  color: string; // rind (juice tint fallback)
+  inner: string; // flesh: cut face + juice
+  radius: number; // at the 720px reference height
 }
 
-// Bigger, juicier roster. radius is the collision/draw radius in px.
 export const FRUIT_TYPES: FruitType[] = [
-  { name: "watermelon", emoji: "🍉", color: "#2f9e44", inner: "#ff6b6b", radius: 78 },
-  { name: "strawberry", emoji: "🍓", color: "#e03131", inner: "#ffa8a8", radius: 60 },
-  { name: "blueberry",  emoji: "🫐", color: "#364fc7", inner: "#91a7ff", radius: 54 },
-  { name: "raspberry",  emoji: "",   color: "#c2255c", inner: "#f783ac", radius: 56 }, // custom-drawn (no emoji exists)
-  { name: "coconut",    emoji: "🥥", color: "#8c5a2b", inner: "#fff9db", radius: 70 },
-  { name: "apple",      emoji: "🍎", color: "#e03131", inner: "#ffe3e3", radius: 64 },
-  { name: "orange",     emoji: "🍊", color: "#e8871e", inner: "#ffd43b", radius: 64 },
-  { name: "banana",     emoji: "🍌", color: "#f0c419", inner: "#fff3bf", radius: 66 },
-  { name: "grapes",     emoji: "🍇", color: "#6741d9", inner: "#b197fc", radius: 62 },
+  { name: "watermelon", emoji: "🍉", color: "#2f9e44", inner: "#ff5f6d", radius: 78 },
+  { name: "strawberry", emoji: "🍓", color: "#e03131", inner: "#ff8fa3", radius: 60 },
+  { name: "blueberry", emoji: "🫐", color: "#364fc7", inner: "#91a7ff", radius: 54 },
+  { name: "raspberry", emoji: "", color: "#c2255c", inner: "#f783ac", radius: 56 },
+  { name: "coconut", emoji: "🥥", color: "#8c5a2b", inner: "#fffbea", radius: 70 },
+  { name: "apple", emoji: "🍎", color: "#e03131", inner: "#fff1d6", radius: 64 },
+  { name: "orange", emoji: "🍊", color: "#e8871e", inner: "#ffc145", radius: 64 },
+  { name: "banana", emoji: "🍌", color: "#f0c419", inner: "#fff3bf", radius: 66 },
+  { name: "grapes", emoji: "🍇", color: "#6741d9", inner: "#c7b5ff", radius: 62 },
 ];
 
-/**
- * Pre-render each fruit emoji into a crisp offscreen canvas sprite.
- * Called once after we know the device pixel ratio. Sprites are square,
- * sized to 2*radius*dpr, with the emoji centered.
- */
-const spriteCache = new Map<string, HTMLCanvasElement>();
+export const BOMB_TYPE: FruitType = { name: "bomb", emoji: "", color: "#1a1d26", inner: "#ff6b3d", radius: 58 };
+export const FREEZE_TYPE: FruitType = { name: "freeze", emoji: "🍌", color: "#4dd4ff", inner: "#d6f5ff", radius: 66 };
+export const FRENZY_TYPE: FruitType = { name: "frenzy", emoji: "🍌", color: "#ffb400", inner: "#fff0b3", radius: 66 };
 
-/** Hand-drawn raspberry: a cluster of magenta drupelets with a little leaf. */
-function drawRaspberry(g: CanvasRenderingContext2D, size: number, dpr: number): void {
-  const cx = size / 2;
-  const cy = size / 2 + 3 * dpr;
-  const R = size * 0.42; // overall berry radius
-  const bead = R * 0.26;
-  g.save();
-  g.shadowColor = "rgba(0,0,0,0.3)";
-  g.shadowBlur = 6 * dpr;
-  g.shadowOffsetY = 3 * dpr;
-  // Drupelets arranged in rings.
-  const rings = [
-    { r: 0, n: 1 },
-    { r: R * 0.42, n: 6 },
-    { r: R * 0.78, n: 9 },
-  ];
-  for (const ring of rings) {
-    for (let i = 0; i < ring.n; i++) {
-      const a = (i / ring.n) * Math.PI * 2 + (ring.r ? 0.3 : 0);
-      const bx = cx + Math.cos(a) * ring.r;
-      const by = cy + Math.sin(a) * ring.r + R * 0.1;
-      const grad = g.createRadialGradient(bx - bead * 0.3, by - bead * 0.3, bead * 0.2, bx, by, bead);
-      grad.addColorStop(0, "#f06595");
-      grad.addColorStop(1, "#a61e4d");
-      g.fillStyle = grad;
-      g.beginPath();
-      g.arc(bx, by, bead, 0, Math.PI * 2);
-      g.fill();
-      // Tiny highlight.
-      g.shadowColor = "transparent";
-      g.fillStyle = "rgba(255,255,255,0.35)";
-      g.beginPath();
-      g.arc(bx - bead * 0.3, by - bead * 0.35, bead * 0.28, 0, Math.PI * 2);
-      g.fill();
-      g.shadowColor = "rgba(0,0,0,0.3)";
-    }
-  }
-  // Little green leaf/stem on top.
-  g.shadowColor = "transparent";
-  g.fillStyle = "#2f9e44";
-  for (let i = 0; i < 3; i++) {
-    const a = -Math.PI / 2 + (i - 1) * 0.5;
-    g.beginPath();
-    g.ellipse(cx + Math.cos(a) * R * 0.1, cy - R * 0.95, bead * 0.7, bead * 0.3, a, 0, Math.PI * 2);
-    g.fill();
-  }
-  g.restore();
-}
-
-export function buildSprites(dpr: number): void {
-  spriteCache.clear();
-  for (const t of FRUIT_TYPES) {
-    const size = Math.ceil(t.radius * 2 * dpr);
-    const c = document.createElement("canvas");
-    c.width = size;
-    c.height = size;
-    const g = c.getContext("2d")!;
-    if (t.emoji) {
-      g.textAlign = "center";
-      g.textBaseline = "middle";
-      g.font = `${Math.floor(t.radius * 1.9 * dpr)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",system-ui`;
-      g.shadowColor = "rgba(0,0,0,0.35)";
-      g.shadowBlur = 8 * dpr;
-      g.shadowOffsetY = 3 * dpr;
-      g.fillText(t.emoji, size / 2, size / 2 + t.radius * 0.06 * dpr);
-    } else {
-      drawRaspberry(g, size, dpr);
-    }
-    spriteCache.set(t.name, c);
-  }
-}
-
-export function getSprite(name: string): HTMLCanvasElement | undefined {
-  return spriteCache.get(name);
-}
+export type FruitKind = "fruit" | "bomb" | "freeze" | "frenzy";
 
 export interface Fruit {
   id: number;
+  kind: FruitKind;
   type: FruitType;
   x: number;
   y: number;
+  r: number;
   vx: number;
   vy: number;
   rot: number;
   vrot: number;
   sliced: boolean;
-  isBomb: boolean;
+  age: number;
 }
 
-const GRAVITY = 1400; // px/s^2
+export type Rng = () => number;
+
+export const GRAVITY_REF = 1400; // px/s² at the 720px reference height
+
+/** Screen scale relative to a 720px-tall reference, clamped for sanity. */
+export function screenScale(w: number, h: number): number {
+  return Math.max(0.55, Math.min(1.35, Math.min(h / 720, w / 900)));
+}
+
+export interface SpawnRules {
+  interval: number; // seconds between waves
+  waveMax: number; // largest wave size allowed right now
+  bombChance: number; // per launched object
+  specials: boolean; // freeze / frenzy bananas may appear
+}
+
+interface PendingLaunch {
+  delay: number;
+  launch: () => void;
+}
 
 export class FruitManager {
   fruits: Fruit[] = [];
   private nextId = 1;
-  private spawnTimer = 0;
-  private spawnInterval = 1.1;
+  private waveTimer = 0.4;
+  private queue: PendingLaunch[] = [];
+  private frenzyLeft = 0;
+  private frenzyTimer = 0;
+  private w = 1280;
+  private h = 720;
+  /** Count of waves launched — exposed for tests/diagnostics. */
+  waves = 0;
+
+  constructor(private rng: Rng = Math.random) {}
 
   reset(): void {
     this.fruits = [];
-    this.spawnTimer = 0;
-    this.spawnInterval = 1.1;
+    this.queue = [];
+    this.waveTimer = 0.4;
+    this.frenzyLeft = 0;
+    this.waves = 0;
   }
 
-  spawn(w: number, h: number): void {
-    const isBomb = Math.random() < 0.12;
-    const type = FRUIT_TYPES[Math.floor(Math.random() * FRUIT_TYPES.length)];
+  private get s(): number {
+    return screenScale(this.w, this.h);
+  }
 
-    const x = w * (0.15 + Math.random() * 0.7);
-    const y = h + 80;
-
-    const peak = h * (0.55 + Math.random() * 0.25);
-    const vy = -Math.sqrt(2 * GRAVITY * peak);
-
-    const toward = (w / 2 - x) / w;
-    const vx = toward * 260 + (Math.random() - 0.5) * 180;
-
-    this.fruits.push({
+  private make(kind: FruitKind, type: FruitType, x: number, y: number, vx: number, vy: number): Fruit {
+    const f: Fruit = {
       id: this.nextId++,
+      kind,
       type,
       x,
       y,
+      r: type.radius * this.s,
       vx,
       vy,
-      rot: Math.random() * Math.PI * 2,
-      vrot: (Math.random() - 0.5) * 3,
+      rot: this.rng() * Math.PI * 2,
+      vrot: (this.rng() - 0.5) * 4,
       sliced: false,
-      isBomb,
-    });
+      age: 0,
+    };
+    this.fruits.push(f);
+    return f;
+  }
+
+  private pickFruit(): FruitType {
+    return FRUIT_TYPES[Math.floor(this.rng() * FRUIT_TYPES.length)];
+  }
+
+  /** Launch one object from the bottom at horizontal fraction `fx`, peaking at fraction `peak` of height. */
+  launchFrom(fx: number, peak: number, kind: FruitKind = "fruit", type?: FruitType): Fruit {
+    const g = GRAVITY_REF * this.s;
+    const x = this.w * fx;
+    const y = this.h + 70 * this.s;
+    const vy = -Math.sqrt(2 * g * (this.h * peak + 70 * this.s));
+    // Drift toward the middle so fruit stays on screen through its arc.
+    const vx = ((0.5 - fx) * 1.1 + (this.rng() - 0.5) * 0.35) * this.w * 0.55;
+    const t = type ?? (kind === "bomb" ? BOMB_TYPE : kind === "freeze" ? FREEZE_TYPE : kind === "frenzy" ? FRENZY_TYPE : this.pickFruit());
+    return this.make(kind, t, x, y, vx, vy);
+  }
+
+  /** Queue a wave following the given rules. */
+  spawnWave(rules: SpawnRules): void {
+    this.waves++;
+    const size = 1 + Math.floor(this.rng() * rules.waveMax);
+    const pattern = this.rng();
+    const kindFor = (): FruitKind => (this.rng() < rules.bombChance ? "bomb" : "fruit");
+
+    if (size >= 3 && pattern < 0.3) {
+      // salvo: quick succession from one side, fanning across
+      const fromLeft = this.rng() < 0.5;
+      for (let i = 0; i < size; i++) {
+        const fx = fromLeft ? 0.18 + i * 0.1 : 0.82 - i * 0.1;
+        this.queue.push({ delay: i * 0.16, launch: () => this.launchFrom(fx, 0.55 + this.rng() * 0.2, kindFor()) });
+      }
+    } else if (size >= 2 && pattern < 0.5) {
+      // mirrored pair(s): satisfying double slices
+      for (let i = 0; i < Math.min(size, 4); i += 2) {
+        const off = 0.12 + this.rng() * 0.18;
+        const peak = 0.6 + this.rng() * 0.15;
+        this.queue.push({ delay: i * 0.12, launch: () => this.launchFrom(0.5 - off, peak, kindFor()) });
+        this.queue.push({ delay: i * 0.12, launch: () => this.launchFrom(0.5 + off, peak, kindFor()) });
+      }
+    } else {
+      // scatter: simultaneous-ish random throws
+      for (let i = 0; i < size; i++) {
+        this.queue.push({ delay: this.rng() * 0.25, launch: () => this.launchFrom(0.15 + this.rng() * 0.7, 0.5 + this.rng() * 0.3, kindFor()) });
+      }
+    }
+
+    if (rules.specials && this.rng() < 0.11) {
+      const kind: FruitKind = this.rng() < 0.5 ? "freeze" : "frenzy";
+      this.queue.push({ delay: 0.3, launch: () => this.launchFrom(0.3 + this.rng() * 0.4, 0.7, kind) });
+    }
+  }
+
+  /** Frenzy: fruit pour in from both sides for `seconds`. */
+  startFrenzy(seconds: number): void {
+    this.frenzyLeft = seconds;
+    this.frenzyTimer = 0;
+  }
+
+  get frenzyActive(): boolean {
+    return this.frenzyLeft > 0;
+  }
+
+  private frenzyLaunch(): void {
+    const fromLeft = this.rng() < 0.5;
+    const s = this.s;
+    const x = fromLeft ? -60 * s : this.w + 60 * s;
+    const y = this.h * (0.55 + this.rng() * 0.25);
+    const vx = (fromLeft ? 1 : -1) * (520 + this.rng() * 260) * s;
+    const vy = -(520 + this.rng() * 300) * s;
+    this.make("fruit", this.pickFruit(), x, y, vx, vy);
   }
 
   /**
-   * Advance physics, auto-spawn, cull off-screen fruit.
-   * Returns non-bomb fruit that fell off un-sliced (misses → combo break).
+   * Advance physics and spawning by `dt` seconds (already time-scaled).
+   * Returns ordinary fruit that fell off-screen un-sliced (misses).
+   * Bombs and specials falling away are never penalized.
    */
-  update(dt: number, w: number, h: number, spawnInterval: number): Fruit[] {
-    this.spawnInterval = spawnInterval;
-    this.spawnTimer += dt;
-    if (this.spawnTimer >= this.spawnInterval) {
-      this.spawnTimer = 0;
-      this.spawn(w, h);
+  update(dt: number, w: number, h: number, rules: SpawnRules | null): Fruit[] {
+    this.w = w;
+    this.h = h;
+    const g = GRAVITY_REF * this.s;
+
+    if (rules) {
+      this.waveTimer -= dt;
+      if (this.waveTimer <= 0 && this.queue.length === 0 && !this.frenzyActive) {
+        this.spawnWave(rules);
+        this.waveTimer = rules.interval;
+      }
+    }
+    for (const q of this.queue) q.delay -= dt;
+    const ready = this.queue.filter((q) => q.delay <= 0);
+    this.queue = this.queue.filter((q) => q.delay > 0);
+    for (const q of ready) q.launch();
+
+    if (this.frenzyLeft > 0) {
+      this.frenzyLeft -= dt;
+      this.frenzyTimer -= dt;
+      if (this.frenzyTimer <= 0) {
+        this.frenzyLaunch();
+        this.frenzyTimer = 0.11;
+      }
     }
 
     for (const f of this.fruits) {
-      f.vy += GRAVITY * dt;
+      f.vy += g * dt;
       f.x += f.vx * dt;
       f.y += f.vy * dt;
       f.rot += f.vrot * dt;
+      f.age += dt;
     }
 
     const missed: Fruit[] = [];
     this.fruits = this.fruits.filter((f) => {
-      if (f.y < h + 160) return true;
-      if (!f.sliced && !f.isBomb) missed.push(f);
+      const gone = f.y > h + f.r + 80 * this.s || (f.age > 1 && (f.x < -f.r * 3 || f.x > w + f.r * 3));
+      if (!gone) return true;
+      if (!f.sliced && f.kind === "fruit") missed.push(f);
       return false;
     });
     return missed;
+  }
+
+  remove(f: Fruit): void {
+    this.fruits = this.fruits.filter((x) => x !== f);
   }
 }
